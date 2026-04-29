@@ -71,12 +71,42 @@ Consumes LoginEvent from Kafka, evaluates suspicious behavior using rule-based e
 - `GeoMismatchRule` - Detects logins from unusual geographic locations
 - `ImpossibleTravelRule` - Detects impossible travel between locations
 - `SuspiciousLoginTimeRule` - Detects logins at unusual times
+- `AnomalyLoginFrequencyRule` - Detects unusually high failed-login frequency
 
 **Risk Score Mapping:**
 - 0-29: LOW
 - 30-69: MEDIUM
-- 70-99: HIGH
-- 100+: CRITICAL
+- 70-89: HIGH
+- 90-100: CRITICAL
+
+**Kafka Topics:**
+- Input: `login-events`
+- Output: `risk-events`
+
+**Port:** 8082
+
+**Local testing without Kafka:**
+- `GET /health`
+- `POST /test/risk/evaluate` - Accepts `LoginEvent` JSON and returns a `RiskEvent`
+
+Example:
+```bash
+curl -X POST http://localhost:8082/test/risk/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "evt-001",
+    "userId": "user-123",
+    "sessionId": "session-001",
+    "timestamp": "2026-04-28T10:00:00Z",
+    "eventType": "LOGIN_SUCCESS",
+    "ipAddress": "203.0.113.10",
+    "country": "Russia",
+    "city": "Moscow",
+    "deviceId": "device-new-001",
+    "userAgent": "Mozilla/5.0",
+    "success": true
+  }'
+```
 
 ### 4. alert-service
 Consumes RiskEvent from Kafka and creates AlertEvent when risk level is HIGH or CRITICAL. Publishes alerts to Kafka topic.
@@ -86,18 +116,119 @@ Consumes RiskEvent from Kafka and creates AlertEvent when risk level is HIGH or 
 - HIGH risk: HIGH severity alert
 - CRITICAL risk: CRITICAL severity alert
 
+**Port:** 8083
+
+**Local testing without Kafka:**
+- `GET /health` - Health check endpoint
+- `POST /test/alerts/create` - Accepts `RiskEvent` JSON and returns an `AlertEvent` (200 OK) or 204 No Content if no alert is created
+
+Example HIGH risk test:
+```bash
+curl -X POST http://localhost:8083/test/alerts/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "risk-001",
+    "sourceEventId": "evt-001",
+    "userId": "user-123",
+    "sessionId": "session-001",
+    "timestamp": "2026-04-28T10:00:00Z",
+    "riskScore": 75,
+    "riskLevel": "HIGH",
+    "reasons": [
+      "Login from unusual geographic location",
+      "Login from a new device"
+    ]
+  }'
+```
+
+Example CRITICAL risk test:
+```bash
+curl -X POST http://localhost:8083/test/alerts/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "risk-002",
+    "sourceEventId": "evt-002",
+    "userId": "user-456",
+    "sessionId": "session-002",
+    "timestamp": "2026-04-28T10:00:00Z",
+    "riskScore": 95,
+    "riskLevel": "CRITICAL",
+    "reasons": [
+      "Impossible travel detected",
+      "Multiple failed login attempts detected"
+    ]
+  }'
+```
+
+Example LOW risk test (returns 204 No Content):
+```bash
+curl -i -X POST http://localhost:8083/test/alerts/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "risk-003",
+    "sourceEventId": "evt-003",
+    "userId": "user-789",
+    "sessionId": "session-003",
+    "timestamp": "2026-04-28T10:00:00Z",
+    "riskScore": 10,
+    "riskLevel": "LOW",
+    "reasons": []
+  }'
+```
+
 ### 5. dashboard-api-service
-Backend API for dashboard. Exposes REST endpoints for recent sessions, risk events, and alerts.
+Backend API for dashboard. Exposes REST endpoints for recent sessions, risk events, alerts, and summary metrics. Consumes RiskEvent and AlertEvent from Kafka to maintain real-time dashboard data.
 
 **Endpoints:**
-- `GET /api/alerts` - Returns all alerts
-- `GET /api/risks` - Returns all risk events
-- `GET /api/sessions` - Returns all sessions
+- `GET /api/alerts` - Returns recent alerts (sorted newest first, max 100)
+- `GET /api/risks` - Returns recent risk events (sorted newest first, max 100)
+- `GET /api/sessions` - Returns recent sessions (sorted newest first, max 100)
+- `GET /api/summary` - Returns dashboard summary metrics
 - `GET /api/health` - Health check endpoint
 
-**Port:** 8082
+**Test Endpoints (for local development):**
+- `POST /test/dashboard/mock-alert` - Creates a mock alert
+- `POST /test/dashboard/mock-risk` - Creates a mock risk event
+- `DELETE /test/dashboard/clear` - Clears all in-memory data
 
-**Note:** Currently uses in-memory data storage. PostgreSQL integration planned for future.
+**Port:** 8084
+
+**Kafka Topics Consumed:**
+- `risk-events` - Consumed by RiskEventDashboardConsumer
+- `alerts` - Consumed by AlertEventDashboardConsumer
+
+**Configuration:**
+- Mock data initialization can be enabled/disabled via `sentineltrack.dashboard.mock-data-enabled` in application.yml
+- CORS enabled for React dashboard (localhost:3000, localhost:5173)
+
+**Note:** Currently uses in-memory data storage with a limit of 100 records per category. PostgreSQL integration and WebSocket live updates planned for future.
+
+Example curl commands:
+```bash
+# Health check
+curl http://localhost:8084/api/health
+
+# Get alerts
+curl http://localhost:8084/api/alerts
+
+# Get risk events
+curl http://localhost:8084/api/risks
+
+# Get sessions
+curl http://localhost:8084/api/sessions
+
+# Get summary
+curl http://localhost:8084/api/summary
+
+# Create mock alert
+curl -X POST http://localhost:8084/test/dashboard/mock-alert
+
+# Create mock risk
+curl -X POST http://localhost:8084/test/dashboard/mock-risk
+
+# Clear all data
+curl -X DELETE http://localhost:8084/test/dashboard/clear
+```
 
 ### 6. dashboard-ui
 React dashboard showing real-time security monitoring view.

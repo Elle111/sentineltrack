@@ -1,0 +1,29 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: dashboard-api-service
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: dashboard-api-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.sentineltrack.common.events"
+        spring.json.use.type.headers: false
+
+sentineltrack:
+  kafka:
+    topics:
+      risk-events: risk-events
+      alerts: alerts
+  dashboard:
+    mock-data-enabled: true
+
+logging:
+  level:
+    com.sentineltrack: INFO
+    org.springframework.kafka: INFO
